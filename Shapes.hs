@@ -1,6 +1,6 @@
 module Shapes where
 
-	import Graphics.UI.GLUT hiding (Point)
+	import Graphics.UI.GLUT
 
 	data Vec = Vec Float Float deriving Show
 	vertexVec :: Vec -> IO ()
@@ -14,32 +14,35 @@ module Shapes where
 	equals :: Vec -> Vec -> Bool
 	(Vec x0 y0) `equals` (Vec x y) = x0 == x && y0 == y
 
+	vecAngle :: Vec -> Float
+	vecAngle (Vec x y) = atan (y / x) + addition
+		where addition = if x < 0 then pi else if y < 0 then 2 * pi else 0
+
 	data Col = Col Float Float Float deriving Show
+	setColor :: Col -> IO ()
 	setColor (Col r g b) = do
 		color $ Color3 r g (b :: GLfloat)
 
-	data Circle =
-		Circle { origin :: Vec, radius :: Float, col :: Col} deriving Show
-	circlePoints :: Circle -> Int -> [Vec]
-	circlePoints (Circle (Vec x0 y0) r _) points
-		| points < 3 = []
-		| otherwise = let
-			step = 2 * pi / fromIntegral points
-			angles = [0, step .. 2 * pi]
-			pointAtAngle a = Vec (x0 + r * (sin a)) (y0 + r * (cos a))
-			in map pointAtAngle angles
-	drawCircle :: Circle -> Int -> IO ()
-	drawCircle c acc = renderPrimitive Polygon $ do
-		let (Circle _ _ rgb) = c
-		setColor rgb
-		mapM_ vertexVec (circlePoints c acc)
+	data FilledPolygon = FilledPolygon [Vec] Col | Circle Vec [Vec] Col
+	drawFilledPolygon :: FilledPolygon -> IO ()
+	drawFilledPolygon (FilledPolygon points col) = do
+		drawPrimitive Polygon points col
+	drawFilledPolygon (Circle _ points col) = do
+		drawPrimitive Polygon points col
 
-	data Rectangle = Rectangle Vec Vec Col deriving Show
-	drawRectangle :: Rectangle -> IO ()
-	drawRectangle (Rectangle (Vec x0 y0) (Vec x1 y1) c) = do
-		setColor c
-		renderPrimitive Polygon $ do
-			vertexVec (Vec x0 y0)
-			vertexVec (Vec x0 y1)
-			vertexVec (Vec x1 y1)
-			vertexVec (Vec x1 y0)
+	circle :: Vec -> Float -> Col -> Int -> FilledPolygon
+	circle center r col points = let
+		(Vec x0 y0) = center;
+		step = 2 * pi / fromIntegral points
+		angles = [0, step .. 2 * pi]
+		pointAtAngle a = Vec (x0 + r * (cos a)) (y0 + r * (sin a))
+		in Circle center (map pointAtAngle angles) col
+
+	rectangle :: Vec -> Vec -> Col-> FilledPolygon
+	rectangle (Vec x0 y0) (Vec x1 y1) col =
+		FilledPolygon [Vec x0 y0, Vec x0 y1, Vec x1 y1, Vec x1 y0] col
+
+	drawPrimitive :: PrimitiveMode -> [Vec] -> Col -> IO ()
+	drawPrimitive primMode vecs col = do
+		setColor col
+		renderPrimitive primMode $ mapM_ vertexVec vecs

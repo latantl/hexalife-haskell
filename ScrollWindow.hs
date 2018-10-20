@@ -8,7 +8,7 @@ module ScrollWindow where
   import Names
   import Shapes
 
-  backRect = new $ Rectangle (Vec (-1) (-1)) (Vec 1 1) (Col 0 0 0)
+  backRect = new $ rectangle (Vec (-1) (-1)) (Vec 1 1) (Col 0 0 0)
   scrollColor = new $ Col 0.8 0.8 0.8
   wheelZoom = 1.05 :: Float
   defWidth = new (640 :: Float)
@@ -24,16 +24,17 @@ module ScrollWindow where
   minTrans = new $ Vec (-1) (-1)
   maxTrans = new $ Vec 1 1
   maxZoom = new (10 :: Float)
-  verScrollbar = new $ Rectangle (Vec 0 0) (Vec 0 0) (Col 0 0 0)
-  horScrollbar = new $ Rectangle (Vec 0 0) (Vec 0 0) (Col 0 0 0)
+  verScrollbar = new $ rectangle (Vec 0 0) (Vec 0 0) (Col 0 0 0)
+  horScrollbar = new $ rectangle (Vec 0 0) (Vec 0 0) (Col 0 0 0)
   onDrawFunction = new (Nothing :: Maybe (IO ()))
   onTickFunction = new (Nothing :: Maybe (IO ()))
   tickPeriodLength = new (1000 :: Int)
   onClickFunction = new (Nothing :: Maybe ClickCallback)
+  onKeyboardFunction = new (Nothing :: Maybe KeyboardCallback)
   type ClickCallback = Vec -> IO ()
 
-  runScrollWindow :: String -> Size -> Position -> IO ()
-  runScrollWindow appName (Size w h) position = do
+  initScrollWindow :: String -> Size -> Position -> IO ()
+  initScrollWindow appName (Size w h) position = do
     defWidth `set` (fromI w)
     defHeight `set` (fromI h)
     width `set` (fromI w)
@@ -51,14 +52,17 @@ module ScrollWindow where
     case func of
       Nothing -> return ()
       otherwise -> addTimerCallback millis timer
+    kf <- val onKeyboardFunction
+    case kf of
+      Nothing -> return ()
+      otherwise -> keyboardCallback $= kf
     adjustScrollbars
-    mainLoop
 
   display :: DisplayCallback
   display = do
     clear [ ColorBuffer ]
     background <- val backRect
-    drawRectangle background
+    drawFilledPolygon background
     (Vec sx sy) <- scaleVec
     (Vec tx ty) <- transVec
     preservingMatrix $ do
@@ -71,8 +75,8 @@ module ScrollWindow where
         otherwise -> fromJust onDraw
     hr <- val horScrollbar
     vr <- val verScrollbar
-    drawRectangle hr
-    drawRectangle vr
+    drawFilledPolygon hr
+    drawFilledPolygon vr
     swapBuffers
 
   timer :: IO ()
@@ -91,23 +95,24 @@ module ScrollWindow where
     winScale `set` (Vec (dw / nw) ((dh / nh) * dw / dh))
     width `set` nw
     height `set` nh
-    adjustZoom 0 0 1
+    adjustZoom
     viewport $= (Position 0 0, Size newWidth newHeight)
     postRedisplay Nothing
 
   mouse :: MouseCallback
-  mouse button state (Position x y) = do
+  mouse button state pixpos = do
+    pos <- pixToPos pixpos
     case button of
       WheelUp -> do
-        adjustZoom x y wheelZoom
+        zoom pos wheelZoom
         adjustScrollbars
       WheelDown -> do
-        adjustZoom x y (1 / wheelZoom)
+        zoom pos (1 / wheelZoom)
         adjustScrollbars
       LeftButton -> case state of
         Down -> do
-          pos <- pixToReal x y
-          latestDown `set` pos
+          p <- posToReal pos
+          latestDown `set` p
           mouseMoved `set` False
         Up -> do
           moved <- val mouseMoved
@@ -120,35 +125,41 @@ module ScrollWindow where
             adjustTranslation
             adjustScrollbars
           else do
-            end <- pixToReal x y
+            end <- posToReal pos
             func <- val onClickFunction
             case func of
               Nothing -> return ()
-              otherwise -> fromJust func $ Vec (fromI x) (fromI y)
+              otherwise -> fromJust func pos
       otherwise -> return ()
     postRedisplay Nothing
 
   motion :: MotionCallback
-  motion (Position x y) = do
+  motion pixpos = do
     mouseMoved `set` True
-    pos <- pixToReal x y
+    realPos <- pixToReal pixpos
     start <- val latestDown
-    motionTrans `set` (pos `sub` start)
+    motionTrans `set` (realPos `sub` start)
     adjustScrollbars
     postRedisplay Nothing
 
-  adjustZoom :: GLint -> GLint -> Float -> IO ()
-  adjustZoom x y ammount = do
-    p1 <- pixToReal x y
+  zoom :: Vec -> Float -> IO ()
+  zoom pos ammount = do
+    p1 <- posToReal pos
     s <- val zoomScale
     (Vec mx my) <- minScaleVec
     let minZ = max mx my
     maxZ <- val maxZoom
     zoomScale `set` (inInterval (ammount * s) minZ maxZ)
-    p2 <- pixToReal x y
+    p2 <- posToReal pos
     tv <- val statTrans
     statTrans `set` (tv `add` p2 `sub` p1)
     adjustTranslation
+
+  adjustZoom :: IO ()
+  adjustZoom = do
+    h <- val height
+    w <- val width
+    zoom (Vec (w / 2) (h / 2)) 1
 
   adjustScrollbars :: IO ()
   adjustScrollbars = do
@@ -168,8 +179,8 @@ module ScrollWindow where
     ry0 <- posToNorm $ Vec 1 (oy - ay)
     ry1 <- posToNorm $ Vec 3 (oy + ay)
     c <- val scrollColor
-    horScrollbar `set` Rectangle rx0 rx1 c
-    verScrollbar `set` Rectangle ry0 ry1 c
+    horScrollbar `set` rectangle rx0 rx1 c
+    verScrollbar `set` rectangle ry0 ry1 c
 
   minScaleVec :: IO (Vec)
   minScaleVec = do
@@ -208,10 +219,14 @@ module ScrollWindow where
     | n > right = right
     | otherwise = n
 
-  pixToReal :: GLint -> GLint -> IO Vec
-  pixToReal px py = do
-    result <- posToReal $ Vec (fromI px) (fromI py)
+  pixToReal :: Position -> IO Vec
+  pixToReal pix = do
+    pos <- pixToPos pix
+    result <- posToReal pos
     return result
+
+  pixToPos :: Position -> IO Vec
+  pixToPos (Position x y) = return $ Vec (fromI x) (fromI y)
 
   posToReal :: Vec -> IO Vec
   posToReal p = do
@@ -238,5 +253,12 @@ module ScrollWindow where
 
   setBackgrounColor :: Col -> IO ()
   setBackgrounColor c = do
-    (Rectangle p0 p1 _) <- val backRect
-    backRect `set` (Rectangle p0 p1 c)
+    (FilledPolygon points _) <- val backRect
+    backRect `set` (FilledPolygon points c)
+
+  setCorners :: Vec -> Vec -> IO ()
+  setCorners leftLower rightUpper = do
+    minTrans `set` (rightUpper `mul` (-1))
+    maxTrans `set` (leftLower `mul` (-1))
+    adjustZoom
+    adjustScrollbars
