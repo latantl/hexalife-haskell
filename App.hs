@@ -49,3 +49,7 @@ module App where
     setBackgrounColor $ if goes then pauseBackground else goBackground
     isGoing `set` not goes
     postRedisplay Nothing
+
+  adjustCorners :: IO ()
+  adjustCorners = do
+    return ()

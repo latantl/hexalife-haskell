@@ -96,6 +96,7 @@ module ScrollWindow where
     width `set` nw
     height `set` nh
     adjustZoom
+    adjustScrollbars
     viewport $= (Position 0 0, Size newWidth newHeight)
     postRedisplay Nothing
 

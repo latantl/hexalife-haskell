@@ -20,16 +20,11 @@ module Life where
   type CellRow = IORef (Seq (IORef Cell))
   cells = new $ S.fromList [] :: IORef (Seq CellRow)
 
-  initLife :: IO ()
   initLife = do
     initCellBase
-    rows <- val cells
-    let (r :<| _) = rows
-    newRow <- copyRow r (Vec shift ((-1) * distInCol))
-    bindRow newRow 0
-    cells `set` (newRow <| rows)
+    mapM_ (\_ -> addTopRows) [0..9]
+    mapM_ (\_ -> addBottomRows) [0..9]
 
-  drawLife :: IO ()
   drawLife = do
     forAllCells drawCell
     forAllCells drawConnections
@@ -60,11 +55,16 @@ module Life where
     let second = new $ S.fromList [c3, c4]
     cells `set` (S.fromList [first,second])
 
+  copyCell :: Vec -> IORef Cell -> IO (IORef Cell)
+  copyCell trans cellref = do
+    (Cell (Circle o _ _) _ _) <- val cellref
+    return (createCellAt $ o `add` trans)
+
   copyInRow :: CellRow -> Vec -> IORef Cell -> IO ()
-  copyInRow row trans cell = do
+  copyInRow row trans cellref = do
     r <- val row
-    (Cell (Circle o _ _) _ _) <- val cell
-    row `set` (r |> (createCellAt $ o `add` trans))
+    newCell <- copyCell trans cellref
+    row `set` (r |> newCell)
 
   copyRow :: CellRow -> Vec -> IO (CellRow)
   copyRow rowref origoTrans = do
@@ -73,15 +73,57 @@ module Life where
     mapM_ (copyInRow newRow origoTrans) oldRow
     return newRow
 
-  bindRow :: CellRow -> Int -> IO (IORef Cell)
-  bindRow crow dir = do
+  bindRow :: CellRow -> IO (IORef Cell)
+  bindRow crow = do
     (first :<| rest) <- val crow
-    foldl f (return (first)) rest
+    foldl f (return first) rest
     where
       f previous actual = do
         prev <- previous
-        bindCells prev dir actual
+        bindCells prev 0 actual
         return actual
+
+  bindRows :: CellRow -> Int -> Int -> CellRow -> IO (Seq (IORef Cell))
+  bindRows row1 dir1 dir2 row2 = do
+    (r1 :|> l1) <- val row1
+    r2 <- val row2
+    let (_ :|> l2) = r2
+    bindCells l1 dir1 l2
+    foldl f (return r2) r1
+    where
+      f row cell = do
+        (n1 :<| n2 :<| rest) <- row
+        bindCells cell dir1 n1
+        bindCells cell dir2 n2
+        return (n2 <| rest)
+
+  addBottomRows = do
+    rows <- val cells
+    let (r :<| _) = rows
+    newRow1 <- copyRow r (Vec shift ((-1) * distInCol))
+    newRow2 <- copyRow newRow1 (Vec ((-1) * shift) ((-1) * distInCol))
+    cells `set` (newRow2 <| newRow1 <| rows)
+    bindRow newRow1
+    bindRow newRow2
+    bindRows newRow1 2 1 r
+    bindRows newRow1 4 5 newRow2
+
+  addTopRows = do
+    rows <- val cells
+    let (_ :|> r) = rows
+    newRow1 <- copyRow r (Vec ((-1) * shift) distInCol)
+    newRow2 <- copyRow newRow1 (Vec shift distInCol)
+    cells `set` (rows |> newRow1 |> newRow2)
+    bindRow newRow1
+    bindRow newRow2
+    bindRows r 2 1 newRow1
+    bindRows newRow2 4 5 newRow1
+
+  addLeftColumn :: IO ()
+  addLeftColumn = do
+    return ()
+
+
 
   forAllCells :: (IORef Cell -> IO ()) -> IO ()
   forAllCells cellFunc = do
@@ -111,8 +153,14 @@ module Life where
   drawConnections cell = do
     (Cell (Circle o1 _ _) neighbours _) <- val cell
     ns <- val neighbours
-    mapM_ (drawConn o1) ns
+    mapM_ (tryDrawConn o1 ns) [0..5]
     where
-      drawConn o1 neighbour = do
-      (Cell (Circle o2 _ _) _ _) <- val neighbour
-      drawPrimitive Lines [o1, o1 `add` ((o2 `sub` o1) `mul` 0.3)] (Col 1 1 1)
+      tryDrawConn o1 neighbours dir =
+        drawConn o1 dir (M.lookup dir neighbours)
+        where
+          drawConn _ _ Nothing = return ()
+          drawConn o1 dir (Just neighbour) = do
+            (Cell (Circle o2 _ _) _ _) <- val neighbour
+            let v1 = o1 `add` (angleToVec (Vec 0 0) (0.1 * radius) ((fromIntegral dir) * pi / 3))
+            let v2 = o1 `add` ((o2 `sub` o1) `mul` 0.3)
+            drawPrimitive Lines [v1, v2] (Col 1 1 1)

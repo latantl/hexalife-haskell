@@ -14,9 +14,13 @@ module Shapes where
 	equals :: Vec -> Vec -> Bool
 	(Vec x0 y0) `equals` (Vec x y) = x0 == x && y0 == y
 
-	vecAngle :: Vec -> Float
-	vecAngle (Vec x y) = atan (y / x) + addition
+	vecToAngle :: Vec -> Float
+	vecToAngle (Vec x y) = atan (y / x) + addition
 		where addition = if x < 0 then pi else if y < 0 then 2 * pi else 0
+
+	angleToVec :: Vec -> Float -> Float -> Vec
+	angleToVec (Vec x0 y0) radius angle =
+		Vec (x0 + radius * (cos angle)) (y0 + radius * (sin angle))
 
 	data Col = Col Float Float Float deriving Show
 	setColor :: Col -> IO ()
@@ -31,12 +35,10 @@ module Shapes where
 		drawPrimitive Polygon points col
 
 	circle :: Vec -> Float -> Col -> Int -> FilledPolygon
-	circle center r col points = let
-		(Vec x0 y0) = center;
+	circle origin radius col points = let
 		step = 2 * pi / fromIntegral points
 		angles = [0, step .. 2 * pi]
-		pointAtAngle a = Vec (x0 + r * (cos a)) (y0 + r * (sin a))
-		in Circle center (map pointAtAngle angles) col
+		in Circle origin (map (angleToVec origin radius) angles) col
 
 	rectangle :: Vec -> Vec -> Col-> FilledPolygon
 	rectangle (Vec x0 y0) (Vec x1 y1) col =
