@@ -214,12 +214,6 @@ module ScrollWindow where
     let y = inInterval ty (ay + 1 / sy) (by - 1 / sy)
     statTrans `set` (Vec x y)
 
-  inInterval :: (Ord n) => n -> n -> n -> n
-  inInterval n left right
-    | n < left = left
-    | n > right = right
-    | otherwise = n
-
   pixToReal :: Position -> IO Vec
   pixToReal pix = do
     pos <- pixToPos pix
@@ -252,8 +246,8 @@ module ScrollWindow where
     let y = ny / (sy * s) - (ty)
     return (Vec x y)
 
-  setBackgrounColor :: Col -> IO ()
-  setBackgrounColor c = do
+  setBackgroundColor :: Col -> IO ()
+  setBackgroundColor c = do
     (FilledPolygon points _) <- val backRect
     backRect `set` (FilledPolygon points c)
 

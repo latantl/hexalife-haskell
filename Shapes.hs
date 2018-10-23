@@ -13,6 +13,8 @@ module Shapes where
 	(Vec x y) `mul` a = Vec (a * x) (a * y)
 	equals :: Vec -> Vec -> Bool
 	(Vec x0 y0) `equals` (Vec x y) = x0 == x && y0 == y
+	dist :: Vec -> Vec -> Float
+	dist (Vec x0 y0) (Vec x1 y1) = sqrt $ (x1 - x0) ^ 2 + (y1 -y0) ^ 2
 
 	vecToAngle :: Vec -> Float
 	vecToAngle (Vec x y) = atan (y / x) + addition
@@ -37,7 +39,8 @@ module Shapes where
 	circle :: Vec -> Float -> Col -> Int -> FilledPolygon
 	circle origin radius col points = let
 		step = 2 * pi / fromIntegral points
-		angles = [0, step .. 2 * pi]
+		halfpi = 0.5 * pi
+		angles = [halfpi, halfpi + step .. 2 * pi]
 		in Circle origin (map (angleToVec origin radius) angles) col
 
 	rectangle :: Vec -> Vec -> Col-> FilledPolygon
