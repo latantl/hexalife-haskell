@@ -1,5 +1,4 @@
 module Shapes where
-
 	import Graphics.UI.GLUT
 
 	data Vec = Vec Float Float deriving Show

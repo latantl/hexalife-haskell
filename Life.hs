@@ -31,15 +31,7 @@ module Life where
   type CellRow = IORef CellSeq
   type CellWorld = IORef (Seq CellRow)
   cellWorld = new $ Empty :: CellWorld
-
-  drawLife = do
-    forAllCells drawCell
-    --forAllCells drawCellConnections
-
-  updateLife :: IO ()
-  updateLife = do
-    return ()
-
+  
   switchCellAt p = do
     let (Vec x y) = p
     crows <- val cellWorld

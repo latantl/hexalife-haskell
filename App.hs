@@ -35,12 +35,13 @@ module App where
 
   onDraw :: IO ()
   onDraw = do
-    drawLife
+    forAllCells drawCell
 
   onTick :: IO ()
   onTick = do
     goes <- val isGoing
-    if goes then updateLife else return ()
+    if not goes then return () else do
+      return ()
 
   onClick :: Vec -> IO ()
   onClick p = do
