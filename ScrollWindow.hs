@@ -31,6 +31,7 @@ module ScrollWindow where
   tickPeriodLength = new (1000 :: Int)
   onClickFunction = new (Nothing :: Maybe ClickCallback)
   onKeyboardFunction = new (Nothing :: Maybe KeyboardCallback)
+  onSpecKeyFunction = new (Nothing :: Maybe SpecialCallback)
   type ClickCallback = Vec -> IO ()
 
   initScrollWindow :: String -> Size -> Position -> IO ()
@@ -49,13 +50,11 @@ module ScrollWindow where
     motionCallback $= Just motion
     millis <- val tickPeriodLength
     func <- val onTickFunction
-    case func of
-      Nothing -> return ()
-      otherwise -> addTimerCallback millis timer
+    maybe emptyIO (\ _ -> addTimerCallback millis timer) func
     kf <- val onKeyboardFunction
-    case kf of
-      Nothing -> return ()
-      otherwise -> keyboardCallback $= kf
+    keyboardCallback $= kf
+    spkf <- val onSpecKeyFunction
+    specialCallback $= spkf
     adjustScrollbars
 
   display :: DisplayCallback
@@ -70,9 +69,7 @@ module ScrollWindow where
       translate $ Vector3 tx ty (0::Float)
       zs <- val zoomScale
       onDraw <- val onDrawFunction
-      case onDraw of
-        Nothing -> return ()
-        otherwise -> fromJust onDraw
+      maybe emptyIO (\f -> f) onDraw
     hr <- val horScrollbar
     vr <- val verScrollbar
     drawFilledPolygon hr
@@ -128,10 +125,8 @@ module ScrollWindow where
           else do
             end <- posToReal pos
             func <- val onClickFunction
-            case func of
-              Nothing -> return ()
-              otherwise -> fromJust func pos
-      otherwise -> return ()
+            maybe emptyIO (\f -> f pos) func
+      otherwise -> emptyIO
     postRedisplay Nothing
 
   motion :: MotionCallback

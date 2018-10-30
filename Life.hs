@@ -1,11 +1,11 @@
 module Life where
 
-  import Data.IORef
+  import Data.Ref hiding (new)
   import Data.Maybe
-  import Data.Map as M hiding (foldl)
+  import Data.Array.IO hiding (index)
   import Data.Sequence as S
   import Graphics.UI.GLUT( PrimitiveMode( Lines ) )
-
+  import System.Random
   import SeqExtensions
   import Shapes
   import Names
@@ -20,19 +20,21 @@ module Life where
   stepRight = Vec distInRow 0
   stepLeft = Vec ((-1) * distInRow) 0
 
-  type NeighbourMap = IORef (Map Int (IORef Cell))
+
+  type Neighbours = IOArray Int (Maybe (Ref Cell))
   type CellState = (Bool, Bool)
-  data Cell = Cell FilledPolygon NeighbourMap CellState
-  createCellAt :: Vec -> IORef Cell
-  createCellAt origo = let
-    c = circle origo radius deadColor circleDots
-    in new $ Cell c (new $ M.fromList []) (False, False)
-  type CellSeq = Seq (IORef Cell)
-  type CellRow = IORef CellSeq
-  type CellWorld = IORef (Seq CellRow)
+  data Cell = Cell FilledPolygon Neighbours CellState
+  createCellAt :: Vec -> IO (Ref Cell)
+  createCellAt origo = do
+    let c = circle origo radius deadColor circleDots
+    ns <- newArray (0, 5) Nothing
+    return $ new $ Cell c ns (False, False)
+  type CellSeq = Seq (Ref Cell)
+  type CellRow = Ref CellSeq
+  type CellWorld = Ref (Seq CellRow)
   cellWorld = new $ Empty :: CellWorld
-  
-  switchCellAt p = do
+
+  switchCellStateAt p = do
     let (Vec x y) = p
     crows <- val cellWorld
     lowestRow <- val (seqHead crows)
@@ -48,8 +50,8 @@ module Life where
           cells1 <- possibleInRowAt x row1
           cells2 <- possibleInRowAt x row2
           return $ cells1 ++ cells2
-    cellToSwitch <- foldl (maxDistanceTo p) (return first) rest
-    switchCell cellToSwitch
+    cellToSwitch <- foldl (minDistanceTo p) (return first) rest
+    switchCellState cellToSwitch
   possibleInRowAt x cseq = do
     let firstCell = seqHead cseq
     let lastCell = seqLast cseq
@@ -60,35 +62,68 @@ module Life where
         else do
           let i = floor $ (x - lowestX) / distInRow
           return [cseq `index` i, cseq `index` (i + 1)]
-  maxDistanceTo p iocref1 cref2 = do
+  minDistanceTo p iocref1 cref2 = do
     cref1 <- iocref1
     (Cell (Circle o1 _ _) _ _) <- val cref1
     (Cell (Circle o2 _ _) _ _) <- val cref2
     let (d1, d2) = (p `dist` o1, p `dist` o2)
     return $ if d1 < d2 then cref1 else cref2
-  switchCell cref = do
-    (Cell (Circle o ps _) ns (present, _)) <- val cref
-    let newState = not present
-    let newColor = if newState then aliveColor else deadColor
-    cref `set` (Cell (Circle o ps newColor) ns (newState, newState))
+  switchCellState cref = do
+    oldState <- getState cref
+    setState cref $ not oldState
+  randomizeState cref = do
+    gen <- newStdGen
+    let (state, _) = random gen
+    setState cref state
+
+  getState cref = do
+    (Cell _ _ (s0, _)) <- val cref
+    return s0
+  getNeighbourState cref index = do
+    (Cell _ neighbours _) <- val cref
+    neighbour <- readArray neighbours index
+    maybe (return False) returnState neighbour
+    where
+      returnState n = do
+        state <- getState n
+        return state
+  neighbourStates cref = do
+    states <- foldl (add cref) (return []) [0..5]
+    return states
+    where
+      add cref iolist dir = do
+        list <- iolist
+        s <- getNeighbourState cref dir
+        return $ s:list
+
+  setNewState cref presentState = do
+    (Cell (Circle o ps _) ns (pastState, _)) <- val cref
+    let newCol = if presentState then aliveColor else deadColor
+    cref `set` (Cell (Circle o ps newCol) ns (pastState, presentState))
+  updateState cref = do
+    (Cell c ns (_, newState)) <- val cref
+    cref `set` (Cell c ns (newState, newState))
+  setState cref state = do
+    setNewState cref state
+    updateState cref
 
   initCellBase = do
-    let c1 = createCellAt (Vec 0 0)
-    let c2 = createCellAt (Vec shift distInCol)
+    c1 <- createCellAt (Vec 0 0)
+    c2 <- createCellAt (Vec shift distInCol)
     bindCells c1 1 c2
     let first = new $ S.fromList [c1]
     let second = new $ S.fromList [c2]
     cellWorld `set` (S.fromList [first,second])
 
-  copyCell :: Vec -> IORef Cell -> IO (IORef Cell)
+  copyCell :: Vec -> Ref Cell -> IO (Ref Cell)
   copyCell trans cref = do
     (Cell (Circle o _ _) _ _) <- val cref
-    return (createCellAt $ o `add` trans)
+    createCellAt $ o `add` trans
 
   copyCellSeq :: CellSeq -> Vec -> IO (CellSeq)
   copyCellSeq cseq trans = mapM (copyCell trans) cseq
 
-  bindCellSeq :: CellSeq -> [Int] -> IO (IORef Cell)
+  bindCellSeq :: CellSeq -> [Int] -> IO (Ref Cell)
   bindCellSeq (first :<| rest) dirs = do
     foldl f (return first) $ zipSeqList rest dirs
     where
@@ -103,18 +138,19 @@ module Life where
     cseqNew <- copyCellSeq cseq trans
     return (new cseqNew)
 
-  bindCellRow :: CellRow -> IO (IORef Cell)
+  bindCellRow :: CellRow -> IO (Ref Cell)
   bindCellRow crow = do
     cseq <- val crow
     bindCellSeq cseq [0,0..]
 
-  bindCellRows :: CellRow -> Int -> Int -> CellRow -> IO (CellSeq)
+  bindCellRows :: CellRow -> Int -> Int -> CellRow -> IO ()
   bindCellRows crow1 dir1 dir2 crow2 = do
     (rest1 :|> last1) <- val crow1
     rest2 <- val crow2
     let (_ :|> last2) = rest2
     bindCells last1 dir1 last2
     foldl f (return rest2) rest1
+    emptyIO
     where
       f row cell = do
         (n1 :<| n2 :<| rest) <- row
@@ -134,10 +170,11 @@ module Life where
     mapM_ (\(c1, c2) -> bind c1 c2) $ everySecond $ S.zip rest1 rest2
     where
       bind c1 c2 = do
-        (Cell _ nref1 _) <- val c1
-        neighbours1 <- val nref1
-        bindCells c2 4 $ fromJust $ M.lookup 5 neighbours1
-        bindCells c2 2 $ fromJust $ M.lookup 1 neighbours1
+        (Cell _ neighbours1 _) <- val c1
+        (Just n1) <- readArray neighbours1 5
+        (Just n2) <- readArray neighbours1 1
+        bindCells c2 4 n1
+        bindCells c2 2 n2
 
   pushRows oldRow pushRow bindRows trans1 trans2 = do
     crows <- val cellWorld
@@ -184,7 +221,7 @@ module Life where
         cseq <- val crow
         crow `set` (cseq |> cref)
 
-  forAllCells :: (IORef Cell -> IO ()) -> IO ()
+  forAllCells :: (Ref Cell -> IO ()) -> IO ()
   forAllCells cellFunc = do
     w <- val cellWorld
     mapM_ rowFunc w
@@ -193,7 +230,7 @@ module Life where
         r <- val row
         mapM_ cellFunc r
 
-  mapCellRows :: (CellSeq -> IORef Cell) -> IO (CellSeq)
+  mapCellRows :: (CellSeq -> Ref Cell) -> IO (CellSeq)
   mapCellRows func = do
     crows <- val cellWorld
     mapM f crows
@@ -202,32 +239,30 @@ module Life where
         cellSeq <- val cellRow
         return (func cellSeq)
 
-  bindCells :: IORef Cell -> Int -> IORef Cell -> IO ()
+  bindCells :: Ref Cell -> Int -> Ref Cell -> IO ()
   bindCells c1 dir c2 = do
     (Cell _ neighbours1 _) <- val c1
     (Cell _ neighbours2 _) <- val c2
-    n1 <- val neighbours1
-    n2 <- val neighbours2
-    neighbours1 `set` (insert dir c2 n1)
-    neighbours2 `set` (insert ((dir + 3) `mod` 6) c1 n2)
+    writeArray neighbours1 dir $ Just c2
+    writeArray neighbours2 ((dir + 3) `mod` 6)$ Just c1
 
-  drawCell :: IORef Cell -> IO ()
+  drawCell :: Ref Cell -> IO ()
   drawCell cell = do
     (Cell circle neighbours _) <- val cell
     drawFilledPolygon circle
 
-  drawCellConnections :: IORef Cell -> IO ()
-  drawCellConnections cell = do
-    (Cell (Circle o1 _ _) neighbours _) <- val cell
-    ns <- val neighbours
-    mapM_ (tryDrawConn o1 ns) [0..5]
+  drawCellConnections :: Ref Cell -> IO ()
+  drawCellConnections cell = mapM_ (tryDrawConn cell) [0..5]
+
+  tryDrawConn :: Ref Cell -> Int -> IO ()
+  tryDrawConn cell dir = do
+    (Cell _ neighbours _) <- val cell
+    n <- readArray neighbours dir
+    maybe emptyIO (drawConn cell dir) n
     where
-      tryDrawConn o1 neighbours dir =
-        drawConn o1 dir (M.lookup dir neighbours)
-        where
-          drawConn _ _ Nothing = return ()
-          drawConn o1 dir (Just neighbour) = do
-            (Cell (Circle o2 _ _) _ _) <- val neighbour
-            let v1 = o1 `add` (angleToVec (Vec 0 0) (0.1 * radius) ((fromI dir) * pi / 3))
-            let v2 = o1 `add` ((o2 `sub` o1) `mul` 0.3)
-            drawPrimitive Lines [v1, v2] (Col 1 1 1)
+      drawConn cell dir neighbour = do
+        (Cell (Circle o2 _ _) _ _) <- val neighbour
+        (Cell (Circle o1 _ _) _ _) <- val cell
+        let v1 = o1 `add` (angleToVec (Vec 0 0) (0.1 * radius) ((fromI dir) * pi / 3))
+        let v2 = o1 `add` ((o2 `sub` o1) `mul` 0.3)
+        drawPrimitive Lines [v1, v2] (Col 1 1 1)
