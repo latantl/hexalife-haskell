@@ -2,8 +2,8 @@ module App where
 
 import Data.Sequence as S hiding(splitAt)
 import Life
---import HexaLife
-import SquareLife
+import HexaLife
+--import SquareLife
 import Names
 import Shapes
 import Graphics.UI.GLUT
