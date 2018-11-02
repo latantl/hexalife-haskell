@@ -1,268 +1,280 @@
 module Life where
 
-  import Data.Ref hiding (new)
-  import Data.Maybe
-  import Data.Array.IO hiding (index)
-  import Data.Sequence as S
-  import Graphics.UI.GLUT( PrimitiveMode( Lines ) )
-  import System.Random
-  import SeqExtensions
-  import Shapes
-  import Names
+import Data.Ref hiding (new)
+import Data.Maybe
+import Data.Array.IO hiding (index)
+import Data.Sequence as S
+import Prelude as P
+import Graphics.UI.GLUT( PrimitiveMode( Lines ) )
+import ScrollWindow
+import System.Random
+import SeqExtensions as E
+import Shapes
+import Names
 
-  deadColor = Col 0.07 0 0.2
-  aliveColor = Col 0 0.25 0.5
-  radius = 0.1 :: Float
-  distInRow = 1.9 * radius
-  shift = distInRow / 2
-  distInCol = distInRow * 0.8660254 --sinus(60°)
-  circleDots = 6 :: Int
-  stepRight = Vec distInRow 0
-  stepLeft = Vec ((-1) * distInRow) 0
+deadColor = Col 0.07 0 0.2
+aliveColor = Col 0 0.25 0.5
 
+type Neighbours = IOArray Int (Maybe (Ref Cell))
+type CellState = (Bool, Bool)
+data Cell = Cell Poly Neighbours CellState
+type CellSeq = Seq (Ref Cell)
+type CellRow = Ref CellSeq
+type CellWorld = Ref (Seq CellRow)
+cellWorld = new $ Empty :: CellWorld
+minSize = 10
+maxSize = 200
+isCropLocked = new False
 
-  type Neighbours = IOArray Int (Maybe (Ref Cell))
-  type CellState = (Bool, Bool)
-  data Cell = Cell FilledPolygon Neighbours CellState
-  createCellAt :: Vec -> IO (Ref Cell)
-  createCellAt origo = do
-    let c = circle origo radius deadColor circleDots
-    ns <- newArray (0, 5) Nothing
-    return $ new $ Cell c ns (False, False)
-  type CellSeq = Seq (Ref Cell)
-  type CellRow = Ref CellSeq
-  type CellWorld = Ref (Seq CellRow)
-  cellWorld = new $ Empty :: CellWorld
+getRowCount = do
+  crows <- val cellWorld
+  return $ S.length crows
+getColumnCount = do
+  crows <- val cellWorld
+  cseq0 <- val (seqHead crows)
+  return $ S.length cseq0
+getCounts = do
+  rc <- getRowCount
+  cc <- getColumnCount
+  return (rc, cc)
 
-  switchCellStateAt p = do
-    let (Vec x y) = p
-    crows <- val cellWorld
-    lowestRow <- val (seqHead crows)
-    highestRow <- val (seqLast crows)
-    (Cell (Circle (Vec _ lowestY) _ _) _ _) <- val (seqHead lowestRow)
-    (Cell (Circle (Vec _ highestY) _ _) _ _) <- val (seqHead highestRow)
-    (first : rest) <- if y < lowestY then possibleInRowAt x lowestRow
-      else if y > highestY then possibleInRowAt x highestRow
-        else do
-          let i = floor $ (y - lowestY) / distInCol
-          row1 <- val (crows `index` i)
-          row2 <- val (crows `index` (i + 1))
-          cells1 <- possibleInRowAt x row1
-          cells2 <- possibleInRowAt x row2
-          return $ cells1 ++ cells2
-    cellToSwitch <- foldl (minDistanceTo p) (return first) rest
-    switchCellState cellToSwitch
-  possibleInRowAt x cseq = do
-    let firstCell = seqHead cseq
-    let lastCell = seqLast cseq
-    (Cell (Circle (Vec lowestX _) _ _) _ _) <- val firstCell
-    (Cell (Circle (Vec highestX _) _ _) _ _) <- val lastCell
-    if x < lowestX then return [firstCell]
-      else if x > highestX then return [lastCell]
-        else do
-          let i = floor $ (x - lowestX) / distInRow
-          return [cseq `index` i, cseq `index` (i + 1)]
-  minDistanceTo p iocref1 cref2 = do
-    cref1 <- iocref1
-    (Cell (Circle o1 _ _) _ _) <- val cref1
-    (Cell (Circle o2 _ _) _ _) <- val cref2
-    let (d1, d2) = (p `dist` o1, p `dist` o2)
-    return $ if d1 < d2 then cref1 else cref2
-  switchCellState cref = do
-    oldState <- getState cref
-    setState cref $ not oldState
-  randomizeState cref = do
-    gen <- newStdGen
-    let (state, _) = random gen
-    setState cref state
+randomizeState cref = do
+  gen <- newStdGen
+  let (state, _) = random gen
+  setState cref state
+switchCellState cref = do
+  (oldState, _) <- getState cref
+  setState cref $ not oldState
 
-  getState cref = do
-    (Cell _ _ (s0, _)) <- val cref
-    return s0
-  getNeighbourState cref index = do
-    (Cell _ neighbours _) <- val cref
-    neighbour <- readArray neighbours index
-    maybe (return False) returnState neighbour
-    where
-      returnState n = do
-        state <- getState n
-        return state
-  neighbourStates cref = do
-    states <- foldl (add cref) (return []) [0..5]
-    return states
-    where
-      add cref iolist dir = do
-        list <- iolist
-        s <- getNeighbourState cref dir
-        return $ s:list
+getState cref = do
+  (Cell _ _ s) <- val cref
+  return s
+getNeighbour cref index = do
+  (Cell _ neighbours _) <- val cref
+  neighbour <- readArray neighbours index
+  return neighbour
+getNeighbourState cref index = do
+  neighbour <- getNeighbour cref index
+  maybe (return False) returnState neighbour
+  where
+    returnState n = do
+      (state, _) <- getState n
+      return state
+neighbourStates ncount cref = do
+  states <- foldl (add cref) (return []) [0..ncount - 1]
+  return states
+  where
+    add cref iolist dir = do
+      list <- iolist
+      s <- getNeighbourState cref dir
+      return $ s:list
+getPosition cref = do
+  (Cell (Poly p _ _) _ _) <- val cref
+  return p
+setNewState cref presentState = do
+  (Cell (Poly o ps _) ns (pastState, _)) <- val cref
+  let newCol = if presentState then aliveColor else deadColor
+  cref `set` (Cell (Poly o ps newCol) ns (pastState, presentState))
+updateState cref = do
+  (Cell c ns (_, newState)) <- val cref
+  cref `set` (Cell c ns (newState, newState))
+setState cref state = do
+  setNewState cref state
+  updateState cref
+copyNeighbours bind (cref0, dirs0) (cref1, dirs1) = do
+  mapM_ copy $ P.zip dirs0 dirs1
+  where
+    copy (d0, d1) = do
+      n <- getNeighbour cref0 d0
+      maybe emptyIO (bind cref1 d1) n
+copySeqNeighbours bind ds0 ds1 cseqPairs =
+  mapM_ (\(s0,s1) -> copyNeighbours bind (s0,ds0) (s1,ds1)) cseqPairs
+bindCells ncount c1 dir c2 = do
+  (Cell _ neighbours1 _) <- val c1
+  (Cell _ neighbours2 _) <- val c2
+  writeArray neighbours1 dir $ Just c2
+  let dir2 = (dir + (ncount `div` 2)) `mod` ncount
+  writeArray neighbours2 dir2 $ Just c1
+bindCellSeq bind dirs (first :<| rest) = do
+  foldl f (return first) $ zipSeqList rest dirs
+  emptyIO
+  where
+    f previous (actual, dir) = do
+      prev <- previous
+      bind prev dir actual
+      return actual
+bindCellSeqs bind dir (cseq0, cseq1) =
+  mapM_ (\(c0,c1) -> bind c0 dir c1) $ S.zip cseq0 cseq1
 
-  setNewState cref presentState = do
-    (Cell (Circle o ps _) ns (pastState, _)) <- val cref
-    let newCol = if presentState then aliveColor else deadColor
-    cref `set` (Cell (Circle o ps newCol) ns (pastState, presentState))
-  updateState cref = do
-    (Cell c ns (_, newState)) <- val cref
-    cref `set` (Cell c ns (newState, newState))
-  setState cref state = do
-    setNewState cref state
-    updateState cref
+copyCell create trans cref = do
+  o <- getPosition cref
+  create $ o `add` trans
+copySeq create cseq trans = mapM (copyCell create trans) cseq
+copyRow create crow trans = do
+  cseq <- val crow
+  cseqNew <- copySeq create cseq trans
+  return (new cseqNew)
 
-  initCellBase = do
-    c1 <- createCellAt (Vec 0 0)
-    c2 <- createCellAt (Vec shift distInCol)
-    bindCells c1 1 c2
-    let first = new $ S.fromList [c1]
-    let second = new $ S.fromList [c2]
-    cellWorld `set` (S.fromList [first,second])
+pushRows cop1 cop2 up down bind create mode getOld pushRow trans1 trans2 = do
+  crows <- val cellWorld
+  let oldRow = getOld crows
+  oldSeq <- val oldRow
+  newRow1 <- copyRow create oldRow trans1
+  newRow2 <- copyRow create newRow1 trans2
+  newSeq1 <- val newRow1
+  newSeq2 <- val newRow2
+  bindCellSeq bind [0,0..] newSeq1
+  bindCellSeq bind [0,0..] newSeq2
+  bindCellSeqs bind up $ mode (newSeq1, oldSeq)
+  bindCellSeqs bind down $ mode (newSeq1, newSeq2)
+  cop1 $ E.zip $ mode (oldSeq, newSeq1)
+  cop2 $ E.zip $ mode (newSeq2, newSeq1)
+  cellWorld `set` (pushRow newRow2 $ pushRow newRow1 crows)
+pushColumn create bind bindColumn copy mode getOldCell pushCell trans = double f
+  where
+    f = do
+      oldc <- mapCellRows getOldCell
+      newc <- copySeq create oldc trans
+      bindColumn newc
+      bindCellSeqs bind 0 $ mode (newc, oldc)
+      copy $ mode (oldc, newc)
+      world <- val cellWorld
+      mapM_ (\(r, c) -> push r c) (S.zip world newc)
+      where
+        push crow cref = do
+          cseq <- val crow
+          crow `set` (cref `pushCell` cseq)
 
-  copyCell :: Vec -> Ref Cell -> IO (Ref Cell)
-  copyCell trans cref = do
-    (Cell (Circle o _ _) _ _) <- val cref
-    createCellAt $ o `add` trans
+dropRows crop = do
+  crows <- val cellWorld
+  cellWorld `set` (crop crows)
+dropBottom = dropRows seqTail
+dropTop = dropRows seqInit
+dropColumns crop = do
+  crows <- val cellWorld
+  mapM_ f crows
+  where
+    f crow =do
+      cref <- val crow
+      crow `set` (crop cref)
+dropLeft = dropColumns seqTail
+dropRight = dropColumns seqInit
+crop getCount dropMin dropMax mini maxi = do
+  c <- getCount
+  mapM_ (\_->dropMax) [1.. (c - (max maxi minSize) - 1) `div` 2]
+  mapM_ (\_->dropMin) [1.. ((max (c - minSize) mini) - 1) `div` 2]
 
-  copyCellSeq :: CellSeq -> Vec -> IO (CellSeq)
-  copyCellSeq cseq trans = mapM (copyCell trans) cseq
+cropRows = crop getRowCount dropBottom dropTop
+cropColumns = crop getColumnCount dropLeft dropRight
 
-  bindCellSeq :: CellSeq -> [Int] -> IO (Ref Cell)
-  bindCellSeq (first :<| rest) dirs = do
-    foldl f (return first) $ zipSeqList rest dirs
-    where
-      f previous (actual, dir) = do
-        prev <- previous
-        bindCells prev dir actual
-        return actual
+forAllCells cellFunc = do
+  w <- val cellWorld
+  mapM_ rowFunc w
+  where
+    rowFunc row = do
+      r <- val row
+      mapM_ cellFunc r
+forInnerCells cellFunc = do
+  crows <- val cellWorld
+  mapM_ rowFunc $ seqInter crows
+  where
+    rowFunc crow = do
+      cseq <- val crow
+      mapM_ cellFunc $ seqInter cseq
 
-  copyCellRow :: CellRow -> Vec -> IO (CellRow)
-  copyCellRow crow trans = do
-    cseq <- val crow
-    cseqNew <- copyCellSeq cseq trans
-    return (new cseqNew)
+mapCellRows :: (CellSeq -> Ref Cell) -> IO (CellSeq)
+mapCellRows func = do
+  crows <- val cellWorld
+  mapM f crows
+  where
+    f cellRow = do
+      cellSeq <- val cellRow
+      return (func cellSeq)
+drawCell cell = do
+  (Cell fp neighbours _) <- val cell
+  drawPoly fp
+drawCellConnections ncount cref = let
+  nc = fromI ncount
+  in mapM_ (tryDrawConn nc cref) [0..(ncount - 1)]
+tryDrawConn ncount cref dir = do
+  (Cell _ neighbours _) <- val cref
+  n <- readArray neighbours dir
+  maybe emptyIO (drawConn cref dir) n
+  where
+    drawConn cref dir neighbour = do
+      o2 <- getPosition neighbour
+      o1 <- getPosition cref
+      let v1 = o1 `add` (angleToVec (Vec 0 0) (0.01) ((fromI dir) * 2 * pi / ncount))
+      let v2 = o1 `add` ((o2 `sub` o1) `mul` 0.3)
+      drawPrimitive Lines [v1, v2] (Col 1 1 1)
 
-  bindCellRow :: CellRow -> IO (Ref Cell)
-  bindCellRow crow = do
-    cseq <- val crow
-    bindCellSeq cseq [0,0..]
+adjustCorners = do
+  (p1, p2) <- getCornerPositions
+  setCorners (p1 `sub` padVec) (p2 `add` padVec)
+  where padVec = (Vec 0.2 0.2)
+getCornerPositions = do
+  crows <- val cellWorld
+  (cref1 :<| _) <- val (seqHead crows)
+  (_ :|> cref2) <- val (seqLast crows)
+  p1 <- getPosition cref1
+  p2 <- getPosition cref2
+  return (p1, p2)
 
-  bindCellRows :: CellRow -> Int -> Int -> CellRow -> IO ()
-  bindCellRows crow1 dir1 dir2 crow2 = do
-    (rest1 :|> last1) <- val crow1
-    rest2 <- val crow2
-    let (_ :|> last2) = rest2
-    bindCells last1 dir1 last2
-    foldl f (return rest2) rest1
-    emptyIO
-    where
-      f row cell = do
-        (n1 :<| n2 :<| rest) <- row
-        bindCells cell dir1 n1
-        bindCells cell dir2 n2
-        return (n2 <| rest)
+updateLife ncount transFunc pushB pushT pushL pushR = do
+  args <- update
+  let getAlive = hasAlive args
+  alive <- getAlive
+  if not alive then emptyIO else do
+    locked <- val isCropLocked
+    if locked then emptyIO else crop args
+    extend args
+  adjustCorners
+  forAllCells updateState
+  return alive
+  where
+    hasAlive (mini, maxi, minj, maxj) = do
+      (rc, cc) <- getCounts
+      return (mini<rc && maxi>=0 && minj<cc && maxj>=0)
+    crop (mini, maxi, minj, maxj) = do
+      cropRows mini maxi
+      cropColumns minj maxj
+    extend (mini, maxi, minj, maxj) = do
+      (rc, cc) <- getCounts
+      if mini == 0 then pushB else emptyIO
+      if maxi == (rc - 1) then pushT else emptyIO
+      if minj == 0 then pushL else emptyIO
+      if maxj == (cc - 1) then pushR else emptyIO
+    update = do
+      crows <- val cellWorld
+      (rc, cc) <- getCounts
+      (_,mini,maxi,minj,maxj) <- foldl rowFunc (return (0,rc,-1,cc,-1)) crows
+      return (mini, maxi, minj, maxj)
+      where
+        rowFunc args crow = do
+          (rc, cc) <- getCounts
+          cseq <- val crow
+          (i, mini0, maxi0, minj0, maxj0) <- args
+          (_, minj, maxj) <- foldl cellFunc (return (0, cc, -1)) cseq
+          let updated = minj<cc && maxj>=0
+          let mini = if updated then min mini0 i else mini0
+          let maxi = if updated then max maxi0 i else maxi0
+          return (i+1, mini, maxi, min minj0 minj, max maxj0 maxj)
+          where
+            cellFunc args cref = do
+              (j, minj0, maxj0) <- args
+              updated <- newState cref
+              let minj = if updated then min minj0 j else minj0
+              let maxj = if updated then max maxj0 j else maxj0
+              return (j+1, minj, maxj)
+              where
+                newState cref = do
+                  (s, _) <- getState cref
+                  ns <- neighbourStates ncount cref
+                  tf <- val transFunc
+                  let state = tf s ns
+                  cref `setNewState` state
+                  return state
 
-  bindCellColumns :: CellSeq -> CellSeq -> IO ()
-  bindCellColumns cseq1 cseq2 = do
-    let (first1 :<| tail1) = cseq1
-    let (first2 :<| tail2) = cseq2
-    let (rest1 :|> last1) = tail1
-    let (rest2 :|> last2) = tail2
-    bindCells first2 2 $ seqHead rest1
-    bindCells last1 5 $ seqLast rest2
-    mapM_ (\(c1, c2) -> bindCells c1 0 c2) $ S.zip cseq1 cseq2
-    mapM_ (\(c1, c2) -> bind c1 c2) $ everySecond $ S.zip rest1 rest2
-    where
-      bind c1 c2 = do
-        (Cell _ neighbours1 _) <- val c1
-        (Just n1) <- readArray neighbours1 5
-        (Just n2) <- readArray neighbours1 1
-        bindCells c2 4 n1
-        bindCells c2 2 n2
-
-  pushRows oldRow pushRow bindRows trans1 trans2 = do
-    crows <- val cellWorld
-    let r = oldRow crows
-    newRow1 <- copyCellRow r trans1
-    newRow2 <- copyCellRow newRow1 trans2
-    cellWorld `set` (pushRow newRow2 $ pushRow newRow1 crows)
-    bindCellRow newRow1
-    bindCellRow newRow2
-    bindRows newRow1 2 1 r
-    bindRows newRow1 4 5 newRow2
-  pushBottomRows = do
-    pushRows seqHead pushFront bindCellRows trans1 trans2
-    where
-      trans1 = (Vec shift ((-1) * distInCol))
-      trans2 = (Vec ((-1) * shift) ((-1) * distInCol))
-  pushTopRows = do
-    pushRows seqLast pushBack reversalBind trans1 trans2
-    where
-      trans1 = (Vec ((-1) * shift) distInCol)
-      trans2 = (Vec shift distInCol)
-      reversalBind r1 d1 d2 r2 = bindCellRows r2 d1 d2 r1
-
-  pushColumn oldColumn pushCell bindColumns trans = do
-    oldc <- oldColumn
-    newc <- copyCellSeq oldc trans
-    bindCellSeq newc $ cycle [1,2]
-    bindColumns newc oldc
-    world <- val cellWorld
-    mapM_ (\(r, c) -> pushCell r c) (S.zip world newc)
-  pushLeftColumn =
-    pushColumn firstColumn pushFrontRow bindCellColumns stepLeft
-    where
-      firstColumn = mapCellRows seqHead
-      pushFrontRow crow cref = do
-        cseq <- val crow
-        crow `set` (cref <| cseq)
-  pushRightColumn =
-    pushColumn lastColumn pushBackRow reversalBind stepRight
-    where
-      reversalBind a b = bindCellColumns b a
-      lastColumn = mapCellRows seqLast
-      pushBackRow crow cref = do
-        cseq <- val crow
-        crow `set` (cseq |> cref)
-
-  forAllCells :: (Ref Cell -> IO ()) -> IO ()
-  forAllCells cellFunc = do
-    w <- val cellWorld
-    mapM_ rowFunc w
-    where
-      rowFunc row = do
-        r <- val row
-        mapM_ cellFunc r
-
-  mapCellRows :: (CellSeq -> Ref Cell) -> IO (CellSeq)
-  mapCellRows func = do
-    crows <- val cellWorld
-    mapM f crows
-    where
-      f cellRow = do
-        cellSeq <- val cellRow
-        return (func cellSeq)
-
-  bindCells :: Ref Cell -> Int -> Ref Cell -> IO ()
-  bindCells c1 dir c2 = do
-    (Cell _ neighbours1 _) <- val c1
-    (Cell _ neighbours2 _) <- val c2
-    writeArray neighbours1 dir $ Just c2
-    writeArray neighbours2 ((dir + 3) `mod` 6)$ Just c1
-
-  drawCell :: Ref Cell -> IO ()
-  drawCell cell = do
-    (Cell circle neighbours _) <- val cell
-    drawFilledPolygon circle
-
-  drawCellConnections :: Ref Cell -> IO ()
-  drawCellConnections cell = mapM_ (tryDrawConn cell) [0..5]
-
-  tryDrawConn :: Ref Cell -> Int -> IO ()
-  tryDrawConn cell dir = do
-    (Cell _ neighbours _) <- val cell
-    n <- readArray neighbours dir
-    maybe emptyIO (drawConn cell dir) n
-    where
-      drawConn cell dir neighbour = do
-        (Cell (Circle o2 _ _) _ _) <- val neighbour
-        (Cell (Circle o1 _ _) _ _) <- val cell
-        let v1 = o1 `add` (angleToVec (Vec 0 0) (0.1 * radius) ((fromI dir) * pi / 3))
-        let v2 = o1 `add` ((o2 `sub` o1) `mul` 0.3)
-        drawPrimitive Lines [v1, v2] (Col 1 1 1)
+toggleCropLock = do
+  locked <- val isCropLocked
+  isCropLocked `set` (not locked)
