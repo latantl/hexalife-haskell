@@ -80,18 +80,18 @@ minDistanceTo p iocref1 cref2 = do
 bind = bindCells neighbourCount
 bindSeqs = bindCellSeqs bind
 bindSeq = bindCellSeq bind
-pushR = pushRows cop1 cop2 2 4 bind create
+pushRo = pushRows cop1 cop2 2 4 bind create
   where
     cop1 = copySeqNeighbours bind [0] [1]
     cop2 = copySeqNeighbours bind [0] [5]
 pushC = pushColumn create bind (bindSeq $ cycle [1,2]) bCols
   where bCols p = copySeqNeighbours bind [4,2] [5,1] $ everySecond $ E.zip p
 
-pushB = pushR normal seqHead pushFront trans1 trans2
+pushB = pushRo normal seqHead pushFront trans1 trans2
   where
     trans1 = (Vec shift ((-1) * distInCol))
     trans2 = (Vec ((-1) * shift) ((-1) * distInCol))
-pushT = pushR reversed seqLast pushBack trans1 trans2
+pushT = pushRo reversed seqLast pushBack trans1 trans2
   where
     trans1 = (Vec ((-1) * shift) distInCol)
     trans2 = (Vec shift distInCol)

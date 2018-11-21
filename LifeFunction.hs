@@ -16,3 +16,5 @@ regularCount ns = sum $ toNums ns
 
 weightedCount ws ns =
   (sum $ map (\(w, s) -> w * s) $ zip ws $ toNums ns) / (sum ws)
+
+weightedCount ws ns = (sum $ map (\(w, s) -> w * s) $ zip ws $ toNums ns) / (sum ws)
